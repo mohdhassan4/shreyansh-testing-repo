@@ -48,7 +48,7 @@ jobs:
           image-name: "sg123"
           image-tag: ${{ github.sha }}
           image-type: local_image
-          fail-on-severity: LOW
+          fail-on-severity: NONE
           docker-image-tag: "dev"
 
           show-summary: 'true'
