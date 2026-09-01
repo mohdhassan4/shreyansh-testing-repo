@@ -1,4 +1,4 @@
-name: Aqua Trivy Local Image Scan
+name: Anchore Ingestion
 
 on:
   workflow_dispatch:
