@@ -41,7 +41,7 @@ jobs:
           target-name: "shreyansh/anchore"
           target-variant: "main"
           show-summary: 'true'
-          log-level: DEBUG
+          log-level: INFO
 
       - name: Use scan output variables
         if: always()
