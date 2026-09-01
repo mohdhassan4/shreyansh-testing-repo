@@ -52,6 +52,7 @@ jobs:
           docker-image-tag: "dev"
 
           show-summary: 'true'
+          log-level: DEBUG
 
       - name: Use scan output variables
         if: always()
