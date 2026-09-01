@@ -36,7 +36,7 @@ jobs:
           target-name: "shreyansh/aquatrivy"
           target-variant: "main"
           show-summary: 'true'
-          log-level: INFO
+          log-level: WARN
       - name: Use scan output variables
         if: always()
         shell: bash
