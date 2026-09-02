@@ -32,12 +32,6 @@ jobs:
           scanner: customingest
           scan-mode: ingestion
           ingestion-file: custom1.json
-          target-name: "hassan/aquatrivyRepo"
-          target-variant: "main"
-          show-summary: 'true'
-          log-level: WARN
-          ingest-tool-severity: false
-          scanner-product-name : "custom"
           
       - name: Use scan output variables
         if: always()
