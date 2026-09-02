@@ -37,7 +37,7 @@ jobs:
           target-variant: "main"
           show-summary: 'true'
           log-level: WARN
-          ingest-tool-severity: true
+          ingest-tool-severity: false
           
       - name: Use scan output variables
         if: always()
