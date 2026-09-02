@@ -31,7 +31,6 @@ jobs:
           harness-domain: ${{ inputs.harness-domain }}
           scanner: customingest
           scan-mode: ingestion
-          target-type: container
           ingestion-file: custom1.json
           target-name: "hassan/aquatrivyRepo"
           target-variant: "main"
