@@ -32,6 +32,8 @@ jobs:
           scanner: customingest
           scan-mode: ingestion
           ingestion-file: custom1.json
+          target-name: "hassan/customScan"
+          target-variant: "main"
           
       - name: Use scan output variables
         if: always()
