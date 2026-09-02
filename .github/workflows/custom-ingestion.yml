@@ -1,4 +1,4 @@
-name: Aqua Trivy Ingestion
+name: Custom Ingestion
 on:
   workflow_dispatch:
     inputs:
