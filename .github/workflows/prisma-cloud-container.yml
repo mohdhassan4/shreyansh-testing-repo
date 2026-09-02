@@ -38,7 +38,7 @@ jobs:
           scan-mode: orchestration
           scan-config: default
           target-type: container
-          image-name: "nirocr/nodegoat"
+          image-name: "autosscauserqa/nodegoat"
           image-tag: "latest"
           image-type: docker_v2
           image-access-id: ${{ secrets.PRIVATE_DOCKER_ACCESS_ID }}
@@ -65,7 +65,7 @@ jobs:
           scan-mode: orchestration
           scan-config: default
           target-type: container
-          image-name: "nirocr/nodegoat"
+          image-name: "autosscauserqa/nodegoat"
           image-tag: "latest"
           image-type: docker_v2
           image-access-id: ${{ secrets.PRIVATE_DOCKER_ACCESS_ID }}
