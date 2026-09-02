@@ -37,6 +37,8 @@ jobs:
           target-variant: "main"
           show-summary: 'true'
           log-level: WARN
+          ingest-tool-severity: true
+          
       - name: Use scan output variables
         if: always()
         shell: bash
