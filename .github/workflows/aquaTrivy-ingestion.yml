@@ -31,7 +31,7 @@ jobs:
           harness-domain: ${{ inputs.harness-domain }}
           scanner: aqua_trivy
           scan-mode: ingestion
-          target-type: repository
+          target-type: container
           ingestion-file: ghas-ingestion/aquatrivy-ingestion.json
           target-name: "shreyansh/aquatrivyRepo"
           target-variant: "main"
