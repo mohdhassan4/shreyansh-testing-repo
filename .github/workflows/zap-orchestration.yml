@@ -65,6 +65,7 @@ jobs:
           target-variant: "main"
           scanner-context: ""
           zap-port: ""
+          instance-port: "80"
 
       - name: Run Zap orchestration scan with standard scan config
         id: sto-scan-standard
@@ -85,6 +86,9 @@ jobs:
           scan-config: "standard"
           target-name: "shreyansh/zapstandard"
           target-variant: "main"
+          scanner-context: "Default Context"
+          zap-port: "8981"
+          instance-port : "80"
 
       - name: Run Zap orchestration scan with quick scan config
         id: sto-scan-quick
