@@ -41,6 +41,8 @@ jobs:
           instance-path: "/435433807708005776736997120918226188991"
           target-type: "instance"
           scan-config: default
+          scanner-context: "Default Context"
+          zap-port: ""
 
       - name: Run Zap orchestration scan with attack scan config
         id: sto-scan-attack
@@ -61,6 +63,8 @@ jobs:
           scan-config: "attack"
           target-name: "shreyansh/zapattack"
           target-variant: "main"
+          scanner-context: ""
+          zap-port: ""
 
       - name: Run Zap orchestration scan with standard scan config
         id: sto-scan-standard
