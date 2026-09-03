@@ -1,4 +1,4 @@
-name: Aqua Trivy Ingestion
+name: snyk scanner Ingestion
 on:
   workflow_dispatch:
     inputs:
