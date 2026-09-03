@@ -48,6 +48,7 @@ jobs:
           docker-image-tag: "dev"
           output-file: scan-output-default.env
           show-summary: 'true'
+          ingest-tool-severity: true
 
       - name: Run Snyk default scan with named target
         id: sto-scan-default-named
@@ -70,6 +71,7 @@ jobs:
           docker-image-tag: "dev"
           output-file: scan-output-default-named.env
           show-summary: 'true'
+          ingest-tool-severity: 'true'
 
       - name: Run Snyk iac scan with default target
         id: sto-scan-iac-default
@@ -90,6 +92,7 @@ jobs:
           docker-image-tag: "dev"
           output-file: scan-output-iac-default.env
           show-summary: 'true'
+          ingest-tool-severity: false
 
       - name: Run Snyk iac scan with named target
         id: sto-scan-iac
