@@ -1,4 +1,4 @@
-name: snyk scanner Ingestion
+name: snyk scanner Ingestion false severity overriden
 on:
   workflow_dispatch:
     inputs:
@@ -33,11 +33,11 @@ jobs:
           scan-mode: ingestion
           target-type: container
           ingestion-file: change_severity/snyk.json
-          target-name: "hassan/snyktrue"
+          target-name: "hassan/snyktrueFalse"
           target-variant: "1.0.0"
           show-summary: 'true'
           log-level: WARN
-          ingest-tool-severity: true
+          ingest-tool-severity: false
           
       - name: Use scan output variables
         if: always()
