@@ -87,6 +87,8 @@ jobs:
           scan-mode: orchestration
           scan-config: iac
           target-type: repository
+          target-name: "shreyanshHasan/snykdefault"
+          target-variant: "main"
           workspace: ./iac
           scanner-access-token: ${{ secrets.SNYK_TOKEN }}
           docker-image-tag: "dev"
