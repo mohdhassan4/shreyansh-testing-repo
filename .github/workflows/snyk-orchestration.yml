@@ -152,7 +152,7 @@ jobs:
           target-type: repository
           workspace: .
           scanner-access-token: ${{ secrets.SNYK_TOKEN }}
-          target-name: "shreyansh/snykcode"
+          target-name: "shreyanshhassan/snykcode"
           target-variant: "main"
           docker-image-tag: "dev"
           output-file: scan-output-code.env
@@ -194,7 +194,7 @@ jobs:
           target-type: repository
           workspace: .
           scanner-access-token: ${{ secrets.SNYK_TOKEN }}
-          target-name: "shreyansh/snykoss"
+          target-name: "hassan/snykoss"
           target-variant: "main"
           docker-image-tag: "dev"
           output-file: scan-output-oss.env
