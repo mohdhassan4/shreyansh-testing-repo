@@ -70,7 +70,7 @@ jobs:
           image-access-token: ${{ secrets.PRIVATE_DOCKER_ACCESS_TOKEN }}
           scanner-access-id: ${{ secrets.WIZ_ACCESS_ID }}
           scanner-access-token: ${{ secrets.WIZ_ACCESS_TOKEN }}
-          target-name: "shreyansh/wizcontainer"
+          target-name: "shreyanshHassan/wizcontainer"
           target-variant: "latest"
           docker-image-tag: "dev"
           output-file: scan-output-container.env
@@ -120,7 +120,7 @@ jobs:
           image-type: docker_v2
           scanner-access-id: ${{ secrets.WIZ_ACCESS_ID }}
           scanner-access-token: ${{ secrets.WIZ_ACCESS_TOKEN }}
-          target-name: "shreyansh/wizpublicdockerhub"
+          target-name: "shreyanshHassan/wizpublicdockerhub"
           target-variant: "latest"
           docker-image-tag: "dev"
           output-file: scan-output-dockerhub.env
