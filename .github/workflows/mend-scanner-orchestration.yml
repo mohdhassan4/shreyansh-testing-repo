@@ -45,9 +45,34 @@ jobs:
           scanner-lookup-type: appendToProductByName
           scanner-product-name: mudit-mend-test
           scanner-exclude: ""
-          canner-include:: ""
-           
+          scanner-include:: ""
+          show-summary: 'true'
 
+      - name: Run Harness STO Scan
+        id: sto-scan-container
+        uses: ./.github/actions/harness-sto
+        with:
+          harness-token: ${{ secrets.HARNESS_PAT_TOKEN_STO_LAB }}
+          harness-org-id: ${{ inputs.harness-org-id }}
+          harness-project-id: ${{ inputs.harness-project-id }}
+          harness-domain: ${{ inputs.harness-domain }}
+
+          scanner: mend
+          scan-mode: orchestration
+          scan-config: default
+          target-type: container
+          target-name: "shreyansh/mendORchcont1"
+          target-variant: "main"
+          image-name: node
+          image-tag: 14-bullseye
+          image-domain: docker.io
+          image-type: docker_v2
+          scanner-access-id: ${{ secrets.MEND_ACCESS_ID }}
+          scanner-access-token: ${{ secrets.MEND_ACCESS_TOKEN }}
+          scanner-lookup-type: appendToProductByName
+          scanner-product-name: mudit-mend-test-new-2
+          scanner-exclude: ""
+          scanner-include:: ""
           show-summary: 'true'
 
       - name: Use scan output variables
