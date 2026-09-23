@@ -1,4 +1,4 @@
-name: Aqua Trivy Orchestration Security Scan
+name: Mend Scanner Orchestration
 
 on:
   workflow_dispatch:
