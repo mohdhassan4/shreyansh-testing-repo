@@ -44,6 +44,8 @@ jobs:
           scanner-access-token: ${{ secrets.MEND_ACCESS_TOKEN }}
           scanner-lookup-type: appendToProductByName
           scanner-product-name: mudit-mend-test
+          scanner-exclude: ""
+          canner-include:: ""
            
 
           show-summary: 'true'
