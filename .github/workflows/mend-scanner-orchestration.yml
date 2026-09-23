@@ -42,6 +42,8 @@ jobs:
           target-variant: "main"
           scanner-access-id: ${{ secrets.MEND_ACCESS_ID }}
           scanner-access-token: ${{ secrets.MEND_ACCESS_TOKEN }}
+          scanner-lookup-type: appendToProductByName
+          scanner-product-name: mudit-mend-test
            
 
           show-summary: 'true'
