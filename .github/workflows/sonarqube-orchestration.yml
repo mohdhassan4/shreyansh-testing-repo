@@ -47,6 +47,10 @@ jobs:
           docker-image-tag: "dev"
           output-file: scan-output-default.env
           show-summary: 'true'
+          scanner-exclude: ""
+          scanner-java-binaries: ""
+          scanner-java-libraries: ""
+          scanner-branch-name: ""
 
       - name: Run SonarQube orchestration scan with named target
         id: sto-scan-orchestration
@@ -73,6 +77,10 @@ jobs:
           docker-image-tag: "dev"
           output-file: scan-output-orchestration.env
           show-summary: 'true'
+          scanner-exclude: ""
+          scanner-java-binaries: ""
+          scanner-java-libraries: ""
+          scanner-branch-name: ""
 
       - name: Use scan output variables
         if: always()
