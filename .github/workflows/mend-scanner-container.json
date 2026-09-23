@@ -1,4 +1,4 @@
-name: Mend Scanner Orchestration Container scan
+name: Mend Scanner Orchestration
 
 on:
   workflow_dispatch:
