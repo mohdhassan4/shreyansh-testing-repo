@@ -62,7 +62,7 @@ jobs:
           scan-config: default
           target-type: container
           target-name: "shreyansh/mendORchcont1"
-          target-variant: "main"
+          target-variant: "1.0.0"
           image-name: node
           image-tag: 14-bullseye
           image-domain: docker.io
