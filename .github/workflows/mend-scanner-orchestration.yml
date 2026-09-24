@@ -47,6 +47,7 @@ jobs:
           scanner-exclude: ""
           scanner-include:: ""
           show-summary: 'true'
+          timeout: '10s'
 
       - name: Run Harness STO Scan
         id: sto-scan-container
