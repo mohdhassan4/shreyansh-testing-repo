@@ -27,6 +27,7 @@ jobs:
 
       - name: Run Harness STO Scan
         id: sto-scan
+        timeout-minutes: 0.17
         uses: ./.github/actions/harness-sto
         with:
           harness-token: ${{ secrets.HARNESS_PAT_TOKEN_STO_LAB }}
@@ -47,7 +48,7 @@ jobs:
           scanner-exclude: ""
           scanner-include:: ""
           show-summary: 'true'
-          timeout: '10s'
+          
 
       - name: Run Harness STO Scan
         id: sto-scan-container
