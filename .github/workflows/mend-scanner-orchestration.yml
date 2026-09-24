@@ -75,6 +75,7 @@ jobs:
           scanner-include:: ""
           show-summary: 'true'
           registry-username: account.harnessImage
+          docker-image-tag: latest
           image-pull-policy: Always
           run-as-user: "1000"
           memory-limit: 2G
