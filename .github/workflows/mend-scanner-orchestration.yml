@@ -76,7 +76,7 @@ jobs:
           show-summary: 'true'
           registry-username: account.harnessImage
           docker-image-tag: latest
-          image-pull-policy: Always
+          image-pull-policy: always
           run-as-user: "1000"
           memory-limit: 2G
           cpu-limit: "1"
