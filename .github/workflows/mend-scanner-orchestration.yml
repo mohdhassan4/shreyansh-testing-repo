@@ -74,6 +74,12 @@ jobs:
           scanner-exclude: ""
           scanner-include:: ""
           show-summary: 'true'
+          registry-username: account.harnessImage
+          image-pull-policy: Always
+          run-as-user: "1000"
+          memory-limit: 2G
+          cpu-limit: "1"
+          privileged: true
 
       - name: Use scan output variables
         if: always()
