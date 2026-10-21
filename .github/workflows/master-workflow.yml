@@ -1,0 +1,245 @@
+name: Master STO Orchestration Trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      harness-org-id:
+        description: 'Harness Organization ID'
+        required: true
+        type: string
+      harness-project-id:
+        description: 'Harness Project ID'
+        required: true
+        type: string
+      harness-domain:
+        description: 'Harness domain (e.g., https://app.harness.io)'
+        required: false
+        type: string
+        default: 'https://app.harness.io'
+      scanners:
+        description: "Which scans to run: 'all', or a comma-separated list of workflow names (e.g. gitleaks-orchestration,bandit-orchestration)."
+        required: false
+        type: string
+        default: 'all'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  run-scans:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch, wait, and assert child workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          ORG_ID: ${{ inputs.harness-org-id }}
+          PROJECT_ID: ${{ inputs.harness-project-id }}
+          DOMAIN: ${{ inputs.harness-domain }}
+          SCANNERS: ${{ inputs.scanners }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          WORKDIR="$(mktemp -d)"
+
+          # Every dispatchable scan workflow, as "name|file" rows.
+          # (name is the workflow file without extension; use it in the
+          # 'scanners' input to run a subset.)
+          ROWS=(
+            "anchore-ingestion|anchore-ingestion.yml"
+            "aqua-trivy-invalid-image|aqua-trivy-invalid-image.yaml"
+            "aqua-trivy-local-image-arm|aqua-trivy-local-image-arm.yml"
+            "aqua-trivy-local-image|aqua-trivy-local-image.yml"
+            "aqua-trivy-orchestration|aqua-trivy-orchestration.yml"
+            "aqua-trivy-valid-image|aqua-trivy-valid-image.yaml"
+            "aquaTrivy-ingestion|aquaTrivy-ingestion.yml"
+            "bandit-orchestration|bandit-orchestration.yml"
+            "blackduck-container|blackduck-container.yml"
+            "brakeman-orchestration|brakeman-orchestration.yml"
+            "checkov-orchestration|checkov-orchestration.yml"
+            "custom-ingestion|custom-ingestion.yml"
+            "ghas-orchestration|ghas-orchestration.yml"
+            "gitleaks-orchestration|gitleaks-orchestration.yml"
+            "grype-container|grype-container.yml"
+            "grype-orchestration|grype-orchestration.yml"
+            "harness-sast-orchestration|harness-sast-orchestration.yml"
+            "harness-sca-container|harness-sca-container.yml"
+            "mend-scanner-orchestration|mend-scanner-orchestration.yml"
+            "modelscan-orchestration|modelscan-orchestration.yml"
+            "nikto-orchestration|nikto-orchestration.yml"
+            "osv-orchestration|osv-orchestration.yml"
+            "owasp-orchestration-policy|owasp-orchestration-policy.yml"
+            "owasp-orchestration|owasp-orchestration.yml"
+            "prisma-cloud-container|prisma-cloud-container.yml"
+            "security-scan|security-scan.yml"
+            "semgrep-ingestion|semgrep-ingestion.yml"
+            "semgrep-orchestration|semgrep-orchestration.yml"
+            "snyk-ingest-false|snyk-ingest-false.yml"
+            "snyk-ingestion|snyk-ingestion.yaml"
+            "snyk-orchestration|snyk-orchestration.yml"
+            "sonarqube-extraction|sonarqube-extraction.yml"
+            "sonarqube-orchestration|sonarqube-orchestration.yml"
+            "traceable-dast|traceable-dast.yml"
+            "wiz-container|wiz-container.yml"
+            "wiz-directory-arm|wiz-directory-arm.yml"
+            "wiz-directory|wiz-directory.yml"
+            "wiz-orchestrator|wiz-orchestrator.yml"
+            "zap-orchestration|zap-orchestration.yml"
+          )
+
+          # Normalize the scanners selector into a space-padded match string.
+          SEL="$(printf '%s' "${SCANNERS:-all}" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
+          want() {
+            # $1 = workflow name (lowercased). Returns 0 if it should run.
+            [ -z "$SEL" ] && return 0
+            [ "$SEL" = "all" ] && return 0
+            case ",$SEL," in *",$1,"*) return 0 ;; esac
+            return 1
+          }
+
+          # ------------------------------------------------------------------
+          # dispatch <wf-file>  ->  echoes the run id of the run it created
+          # ------------------------------------------------------------------
+          dispatch() {
+            local wf="$1"
+            local since
+            since="$(date -u -d '-15 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+
+            gh workflow run "$wf" \
+              --ref "$REF" \
+              -f harness-org-id="$ORG_ID" \
+              -f harness-project-id="$PROJECT_ID" \
+              -f harness-domain="$DOMAIN" >&2
+
+            local run_id="" attempt
+            for attempt in $(seq 1 24); do
+              sleep 5
+              run_id="$(gh run list \
+                --workflow "$wf" \
+                --event workflow_dispatch \
+                --branch "$REF" \
+                --limit 20 \
+                --json databaseId,createdAt \
+                --jq "map(select(.createdAt > \"$since\")) | sort_by(.createdAt) | last | .databaseId" 2>/dev/null)"
+              if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
+                echo "$run_id"; return 0
+              fi
+            done
+            return 1
+          }
+
+          # ------------------------------------------------------------------
+          # Phase 1 - dispatch every selected workflow and record its run id.
+          # ------------------------------------------------------------------
+          echo "=================== Dispatching scans ==================="
+          echo "Selection: ${SCANNERS:-all}"
+          for row in "${ROWS[@]}"; do
+            IFS='|' read -r name wf <<< "$row"
+            name_lc="$(printf '%s' "$name" | tr 'A-Z' 'a-z')"
+            if ! want "$name_lc"; then echo "Skipping $name (not selected)"; continue; fi
+            echo "Dispatching $name ($wf) ..."
+            if run_id="$(dispatch "$wf")"; then
+              echo "$name|$wf|$run_id" >> "$WORKDIR/runs.txt"
+              echo "  -> $name run id: $run_id"
+              echo "  -> ${{ github.server_url }}/${{ github.repository }}/actions/runs/$run_id"
+            else
+              echo "::error::Could not find a run for $name after dispatching. Check the Actions tab."
+              echo "$name|$wf|UNKNOWN" >> "$WORKDIR/runs.txt"
+            fi
+          done
+
+          if [ ! -f "$WORKDIR/runs.txt" ]; then
+            echo "No scans matched the selection '${SCANNERS:-all}'. Nothing to do."
+            exit 0
+          fi
+
+          # ------------------------------------------------------------------
+          # Phase 2 - wait for each run to finish (runs proceed in parallel).
+          # ------------------------------------------------------------------
+          echo ""
+          echo "=================== Waiting for scans ==================="
+          while IFS='|' read -r name wf run_id; do
+            [ "$run_id" = "UNKNOWN" ] && continue
+            echo "Watching $name (run $run_id) ..."
+            gh run watch "$run_id" --interval 15 >/dev/null 2>&1 || true
+          done < "$WORKDIR/runs.txt"
+
+          # ------------------------------------------------------------------
+          # Phase 3 - per run: conclusion, download artifacts, tally counts,
+          #           ASSERT (succeeded AND issue count present).
+          # ------------------------------------------------------------------
+          echo ""
+          echo "=================== Collecting & asserting ==================="
+          ASSERT_FAILED=0
+
+          {
+            echo "## Master STO Scan Results"
+            echo ""
+            echo "| Scanner | Run | Conclusion | Count present | Assertion | Total | Critical | High | Medium | Low | Info |"
+            echo "|---|---|---|---|---|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS='|' read -r name wf run_id; do
+            if [ "$run_id" = "UNKNOWN" ]; then
+              ASSERT_FAILED=1
+              echo "ASSERT FAIL: $name - no run was found after dispatch"
+              echo "| $name | - | not-found | no | FAIL | - | - | - | - | - | - |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion' 2>/dev/null || echo 'unknown')"
+
+            dldir="$WORKDIR/$run_id"
+            mkdir -p "$dldir"
+            gh run download "$run_id" -D "$dldir" >/dev/null 2>&1 || true
+
+            c=0; h=0; m=0; l=0; i=0; t=0
+            count_present=0
+            while IFS= read -r envfile; do
+              getv() { grep "^$1=" "$2" | head -n1 | cut -d= -f2 | tr -dc '0-9'; }
+              if grep -q "^ISSUES_COUNT=" "$envfile"; then count_present=1; fi
+              vc="$(getv CRITICAL "$envfile")"; vc="${vc:-0}"
+              vh="$(getv HIGH "$envfile")"; vh="${vh:-0}"
+              vm="$(getv MEDIUM "$envfile")"; vm="${vm:-0}"
+              vl="$(getv LOW "$envfile")"; vl="${vl:-0}"
+              vi="$(getv INFO "$envfile")"; vi="${vi:-0}"
+              vt="$(getv ISSUES_COUNT "$envfile")"; vt="${vt:-0}"
+              c=$((c + vc)); h=$((h + vh)); m=$((m + vm)); l=$((l + vl)); i=$((i + vi)); t=$((t + vt))
+            done < <(find "$dldir" -type f -name '*.env' 2>/dev/null)
+
+            assertion="PASS"; mark="PASS"; reasons=""
+            if [ "$conclusion" != "success" ]; then
+              assertion="FAIL"; mark="FAIL"; reasons="run concluded '$conclusion'"
+            fi
+            if [ "$count_present" -ne 1 ]; then
+              assertion="FAIL"; mark="FAIL"
+              reasons="${reasons:+$reasons; }no issue count reported"
+            fi
+
+            present_txt="yes"; [ "$count_present" -eq 1 ] || present_txt="no"
+            if [ "$assertion" = "PASS" ]; then
+              echo "ASSERT PASS: $name - conclusion=$conclusion total=$t (C:$c H:$h M:$m L:$l I:$i)"
+            else
+              ASSERT_FAILED=1
+              echo "ASSERT FAIL: $name - $reasons (conclusion=$conclusion, count_present=$count_present)"
+            fi
+
+            runlink="[$run_id](${{ github.server_url }}/${{ github.repository }}/actions/runs/$run_id)"
+            echo "| $name | $runlink | $conclusion | $present_txt | $mark | $t | $c | $h | $m | $l | $i |" >> "$GITHUB_STEP_SUMMARY"
+          done < "$WORKDIR/runs.txt"
+
+          # ------------------------------------------------------------------
+          # Phase 4 - overall result.
+          # ------------------------------------------------------------------
+          echo ""
+          echo "=================== Verification ==================="
+          if [ "$ASSERT_FAILED" -eq 1 ]; then
+            echo "::error::One or more scans failed the assertion (not successful, or no issue count reported)."
+            { echo ""; echo "**One or more scans failed the assertion.**"; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "All scans succeeded and reported an issue count."
+          { echo ""; echo "**All scans succeeded and reported an issue count.**"; } >> "$GITHUB_STEP_SUMMARY"
