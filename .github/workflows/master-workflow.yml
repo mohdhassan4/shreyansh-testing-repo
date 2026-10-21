@@ -1,4 +1,4 @@
-name: Master STO Orchestration Trigger
+name: Master STO Orchestration Trigger for all modes
 
 on:
   workflow_dispatch:
