@@ -105,6 +105,7 @@ jobs:
               "aqua-trivy-local-image-arm",
               "aqua-trivy-local-image",
               "aqua-trivy-orchestration",
+              "owasp-orchestration-policy"
           }
 
           def norm(x):
