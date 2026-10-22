@@ -34,8 +34,10 @@ permissions:
 jobs:
   # ====================================================================
   # prepare - validate the selection and emit the matrix of scanners.
-  #           Each matrix entry carries {name, file} so the real
-  #           workflow filename (incl. .yaml / camelCase) is preserved.
+  #           Only workflows that actually exist on this branch and are
+  #           dispatchable with the Harness inputs are listed here.
+  #           Each entry carries {name, file} so the real filename
+  #           (incl. .yaml / camelCase) is preserved.
   # ====================================================================
   prepare:
     runs-on: ubuntu-latest
@@ -53,27 +55,24 @@ jobs:
           python3 - <<'PY'
           import json, os
 
-          # name (workflow file stem) -> actual workflow filename
+          # name (workflow file stem) -> actual workflow filename.
+          # Only real, dispatchable scan workflows on this branch.
           NAME_TO_FILE = {
               "anchore-ingestion": "anchore-ingestion.yml",
               "aqua-trivy-invalid-image": "aqua-trivy-invalid-image.yaml",
               "aqua-trivy-local-image-arm": "aqua-trivy-local-image-arm.yml",
               "aqua-trivy-local-image": "aqua-trivy-local-image.yml",
               "aqua-trivy-orchestration": "aqua-trivy-orchestration.yml",
-              "aqua-trivy-valid-image": "aqua-trivy-valid-image.yaml",
-              "aquaTrivy-ingestion": "aquaTrivy-ingestion.yml",
               "bandit-orchestration": "bandit-orchestration.yml",
               "blackduck-container": "blackduck-container.yml",
               "brakeman-orchestration": "brakeman-orchestration.yml",
               "checkov-orchestration": "checkov-orchestration.yml",
-              "custom-ingestion": "custom-ingestion.yml",
               "ghas-orchestration": "ghas-orchestration.yml",
               "gitleaks-orchestration": "gitleaks-orchestration.yml",
               "grype-container": "grype-container.yml",
               "grype-orchestration": "grype-orchestration.yml",
               "harness-sast-orchestration": "harness-sast-orchestration.yml",
               "harness-sca-container": "harness-sca-container.yml",
-              "mend-scanner-orchestration": "mend-scanner-orchestration.yml",
               "modelscan-orchestration": "modelscan-orchestration.yml",
               "nikto-orchestration": "nikto-orchestration.yml",
               "osv-orchestration": "osv-orchestration.yml",
@@ -81,10 +80,7 @@ jobs:
               "owasp-orchestration": "owasp-orchestration.yml",
               "prisma-cloud-container": "prisma-cloud-container.yml",
               "security-scan": "security-scan.yml",
-              "semgrep-ingestion": "semgrep-ingestion.yml",
               "semgrep-orchestration": "semgrep-orchestration.yml",
-              "snyk-ingest-false": "snyk-ingest-false.yml",
-              "snyk-ingestion": "snyk-ingestion.yaml",
               "snyk-orchestration": "snyk-orchestration.yml",
               "sonarqube-extraction": "sonarqube-extraction.yml",
               "sonarqube-orchestration": "sonarqube-orchestration.yml",
@@ -92,7 +88,6 @@ jobs:
               "wiz-container": "wiz-container.yml",
               "wiz-directory-arm": "wiz-directory-arm.yml",
               "wiz-directory": "wiz-directory.yml",
-              "wiz-orchestrator": "wiz-orchestrator.yml",
               "zap-orchestration": "zap-orchestration.yml",
           }
 
@@ -130,9 +125,8 @@ jobs:
 
   # ====================================================================
   # run-scanners - one matrix job per scanner (parallel, throttled by
-  #                max_parallel). Each dispatches its child workflow,
-  #                waits for it to finish, and records PASSED/FAILED
-  #                based on the child run's conclusion.
+  #                max_parallel). Dispatches the child, waits, and
+  #                records PASSED/FAILED from the child run conclusion.
   # ====================================================================
   run-scanners:
     needs: prepare
@@ -176,7 +170,6 @@ jobs:
 
           START="$(date -u -d '-15 seconds' +%Y-%m-%dT%H:%M:%SZ)"
 
-          # Dispatch the child workflow with the Harness inputs.
           if ! gh workflow run "$WF_FILE" \
                --repo "$REPO" --ref "$BRANCH" \
                -f harness-org-id="$ORG_ID" \
@@ -186,7 +179,6 @@ jobs:
             save_result; exit 1
           fi
 
-          # Find the run this dispatch created.
           for i in $(seq 1 30); do
             RUN_ID="$(gh run list --repo "$REPO" --workflow "$WF_FILE" \
               --branch "$BRANCH" --event workflow_dispatch --limit 20 \
@@ -202,10 +194,8 @@ jobs:
           RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
           echo "Run: $RUN_URL"
 
-          # Wait for completion, then read the conclusion.
           gh run watch "$RUN_ID" --repo "$REPO" --interval 15 >/dev/null 2>&1 || true
           CONCLUSION="$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion --jq '.conclusion' 2>/dev/null || echo unknown)"
-
           if [ "$CONCLUSION" = "success" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
 
           save_result
