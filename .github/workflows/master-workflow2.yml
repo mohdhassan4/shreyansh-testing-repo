@@ -1,4 +1,4 @@
-name: Master Scanner Workflow
+name: Master Scanner Workflow with limit
 
 on:
   workflow_dispatch:
