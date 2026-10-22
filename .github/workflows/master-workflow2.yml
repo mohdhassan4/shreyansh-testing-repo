@@ -1,4 +1,4 @@
-name: Master Scanner Workflow with limit
+name: Master Scanner Workflow
 
 on:
   workflow_dispatch:
@@ -34,10 +34,10 @@ permissions:
 jobs:
   # ====================================================================
   # prepare - validate the selection and emit the matrix of scanners.
-  #           Only workflows that actually exist on this branch and are
-  #           dispatchable with the Harness inputs are listed here.
-  #           Each entry carries {name, file} so the real filename
-  #           (incl. .yaml / camelCase) is preserved.
+  #           Each entry carries {name, file, expected}:
+  #             expected = "success"  -> scanner must pass (default)
+  #             expected = "failure"  -> NEGATIVE test; must fail
+  #           Edit EXPECT_FAIL below to mark negative-scenario workflows.
   # ====================================================================
   prepare:
     runs-on: ubuntu-latest
@@ -91,6 +91,14 @@ jobs:
               "zap-orchestration": "zap-orchestration.yml",
           }
 
+          # Negative-scenario workflows: these are EXPECTED to fail, so a
+          # child-run conclusion of "failure" is treated as PASSED, and an
+          # unexpected "success" is treated as FAILED.
+          # >>> Add any other negative-test workflow names here. <<<
+          EXPECT_FAIL = {
+              "aqua-trivy-invalid-image",
+          }
+
           raw = os.environ["SCANNER_INPUT"].strip()
           limit = int(os.environ["MAX_PARALLEL"])
           if not 1 <= limit <= 30:
@@ -115,18 +123,28 @@ jobs:
           if invalid:
               raise SystemExit(f"Invalid scanners: {invalid}\nValid: {sorted(NAME_TO_FILE)}")
 
-          matrix = [{"name": s, "file": NAME_TO_FILE[s]} for s in selected]
+          unknown_neg = sorted(EXPECT_FAIL - set(NAME_TO_FILE))
+          if unknown_neg:
+              raise SystemExit(f"EXPECT_FAIL names not in scanner list: {unknown_neg}")
+
+          matrix = [{
+              "name": s,
+              "file": NAME_TO_FILE[s],
+              "expected": "failure" if s in EXPECT_FAIL else "success",
+          } for s in selected]
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write("matrix=" + json.dumps(matrix) + "\n")
               f.write(f"max_parallel={limit}\n")
           print(f"Selected {len(matrix)} scanner(s): {selected}")
+          print(f"Negative tests (expected to fail): {sorted(EXPECT_FAIL & set(selected))}")
           print(f"Max parallel: {limit}")
           PY
 
   # ====================================================================
   # run-scanners - one matrix job per scanner (parallel, throttled by
-  #                max_parallel). Dispatches the child, waits, and
-  #                records PASSED/FAILED from the child run conclusion.
+  #                max_parallel). Dispatches the child, waits, then
+  #                marks PASSED when the actual conclusion matches the
+  #                expected outcome (success, or failure for neg tests).
   # ====================================================================
   run-scanners:
     needs: prepare
@@ -140,13 +158,13 @@ jobs:
     steps:
       - name: Dispatch and monitor scanner
         id: scanner
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           SCANNER: ${{ matrix.scanner.name }}
           WF_FILE: ${{ matrix.scanner.file }}
+          EXPECTED: ${{ matrix.scanner.expected }}
           ORG_ID: ${{ inputs.harness-org-id }}
           PROJECT_ID: ${{ inputs.harness-project-id }}
           DOMAIN: ${{ inputs.harness-domain }}
@@ -162,8 +180,8 @@ jobs:
           import json, sys
           json.dump({
             "scanner": "$SCANNER", "file": "$WF_FILE",
-            "run_id": "$RUN_ID", "url": "$RUN_URL",
-            "conclusion": "$CONCLUSION", "status": "$STATUS"
+            "expected": "$EXPECTED", "conclusion": "$CONCLUSION",
+            "status": "$STATUS", "run_id": "$RUN_ID", "url": "$RUN_URL"
           }, open(sys.argv[1], "w"))
           PY
           }
@@ -196,10 +214,16 @@ jobs:
 
           gh run watch "$RUN_ID" --repo "$REPO" --interval 15 >/dev/null 2>&1 || true
           CONCLUSION="$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion --jq '.conclusion' 2>/dev/null || echo unknown)"
-          if [ "$CONCLUSION" = "success" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
+
+          # Compare actual conclusion against the expected outcome.
+          if [ "$EXPECTED" = "failure" ]; then
+            if [ "$CONCLUSION" = "failure" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
+          else
+            if [ "$CONCLUSION" = "success" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
+          fi
 
           save_result
-          echo "Scanner: $SCANNER | conclusion=$CONCLUSION | status=$STATUS"
+          echo "Scanner: $SCANNER | expected=$EXPECTED | conclusion=$CONCLUSION | status=$STATUS"
           [ "$STATUS" = "PASSED" ]
 
       - name: Upload scanner result
@@ -212,8 +236,8 @@ jobs:
           retention-days: 7
 
   # ====================================================================
-  # summary - merge per-scanner results, print a pass/fail table, and
-  #           assert every selected scanner PASSED.
+  # summary - merge per-scanner results, print a table (incl. the
+  #           expected outcome), and assert every scanner matched it.
   # ====================================================================
   summary:
     name: Scanner Execution Summary
@@ -241,25 +265,25 @@ jobs:
 
           out = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
           out.write("# Scanner Execution Summary\n\n")
-          out.write("| Scanner | Status | Conclusion | Run |\n")
-          out.write("|---|---|---|---|\n")
+          out.write("| Scanner | Expected | Conclusion | Status | Run |\n")
+          out.write("|---|---|---|---|---|\n")
           for r in results:
               url = r.get("url", "")
               link = f"[View run]({url})" if url else "Unavailable"
-              out.write(f"| {r.get('scanner','')} | **{r.get('status','')}** | {r.get('conclusion','')} | {link} |\n")
+              out.write(f"| {r.get('scanner','')} | {r.get('expected','success')} | {r.get('conclusion','')} | **{r.get('status','')}** | {link} |\n")
           passed = sum(r.get("status")=="PASSED" for r in results)
           failed = len(results)-passed
           out.write(f"\n**Total:** {len(results)} | **Passed:** {passed} | **Failed:** {failed}\n")
           print(f"Results collected: {len(results)}")
           PY
 
-      - name: Assert all selected scanners passed
+      - name: Assert all scanners matched expected outcome
         env:
           MATRIX: ${{ needs.prepare.outputs.matrix }}
         run: |
           python3 - <<'PY'
           import glob, json, os, sys
-          expected = [e["name"] for e in json.loads(os.environ["MATRIX"])]
+          expected = {e["name"]: e["expected"] for e in json.loads(os.environ["MATRIX"])}
           results = {}
           for path in glob.glob("results/*.json"):
               try:
@@ -267,16 +291,16 @@ jobs:
               except (ValueError, OSError, KeyError): pass
 
           problems = []
-          for s in expected:
+          for s, exp in expected.items():
               r = results.get(s)
               if r is None:
                   problems.append(f"{s}: no result")
               elif r.get("status") != "PASSED":
-                  problems.append(f"{s}: status={r.get('status')} conclusion={r.get('conclusion')}")
+                  problems.append(f"{s}: expected={exp} conclusion={r.get('conclusion')} -> {r.get('status')}")
 
           if problems:
-              print("FAILED scanners:")
+              print("Scanners that did not match expected outcome:")
               for p in problems: print("  -", p)
               sys.exit(1)
-          print(f"All {len(expected)} selected scanner(s) passed.")
+          print(f"All {len(expected)} scanner(s) matched their expected outcome.")
           PY
