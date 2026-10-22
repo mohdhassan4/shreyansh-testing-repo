@@ -1,4 +1,4 @@
-name: Master Scanner with include and exclude
+name: Master Scanner Workflow
 
 on:
   workflow_dispatch:
@@ -104,7 +104,7 @@ jobs:
               "aqua-trivy-invalid-image",
               "aqua-trivy-local-image-arm",
               "aqua-trivy-local-image",
-              "aqua-trivy-orchestration"
+              "aqua-trivy-orchestration",
           }
 
           def norm(x):
@@ -308,12 +308,12 @@ jobs:
 
           out = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
           out.write("# Scanner Execution Summary\n\n")
-          out.write("| Scanner | Expected | Conclusion | Status | Run |\n")
-          out.write("|---|---|---|---|---|\n")
+          out.write("| Scanner | Status | Run |\n")
+          out.write("|---|---|---|\n")
           for r in results:
               url = r.get("url", "")
               link = f"[View run]({url})" if url else "Unavailable"
-              out.write(f"| {r.get('scanner','')} | {r.get('expected','success')} | {r.get('conclusion','')} | **{r.get('status','')}** | {link} |\n")
+              out.write(f"| {r.get('scanner','')} | **{r.get('status','')}** | {link} |\n")
           passed = sum(r.get("status")=="PASSED" for r in results)
           failed = len(results)-passed
           out.write(f"\n**Total:** {len(results)} | **Passed:** {passed} | **Failed:** {failed}\n")
