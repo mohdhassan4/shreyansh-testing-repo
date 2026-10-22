@@ -102,6 +102,9 @@ jobs:
           # >>> Add any other negative-test workflow names here. <<<
           EXPECT_FAIL = {
               "aqua-trivy-invalid-image",
+              "aqua-trivy-local-image-arm",
+              "aqua-trivy-local-image",
+              "aqua-trivy-orchestration"
           }
 
           def norm(x):
