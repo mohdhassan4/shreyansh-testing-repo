@@ -1,4 +1,4 @@
-name: Master STO Orchestration Trigger for all modes
+name: Master Scanner Workflow
 
 on:
   workflow_dispatch:
@@ -17,229 +17,334 @@ on:
         type: string
         default: 'https://app.harness.io'
       scanners:
-        description: "Which scans to run: 'all', or a comma-separated list of workflow names (e.g. gitleaks-orchestration,bandit-orchestration)."
-        required: false
+        description: "Use 'all', or a JSON array of scanner names (e.g. [\"gitleaks-orchestration\",\"bandit-orchestration\"])."
+        required: true
         type: string
         default: 'all'
+      exclude:
+        description: "Scanners to skip: comma-separated or JSON array (e.g. aqua-trivy-invalid-image,snyk-orchestration). Applied after 'scanners'. Blank = none."
+        required: false
+        type: string
+        default: ''
+      max_parallel:
+        description: 'Maximum concurrent scanners (1-30)'
+        required: true
+        type: number
+        default: 10
 
 permissions:
   actions: write
   contents: read
 
 jobs:
-  run-scans:
+  # ====================================================================
+  # prepare - validate selection, apply excludes, emit scanner matrix.
+  #           Each entry carries {name, file, expected}:
+  #             expected = "success"  -> scanner must pass (default)
+  #             expected = "failure"  -> NEGATIVE test; must fail
+  #           Edit EXPECT_FAIL below to mark negative-scenario workflows.
+  # ====================================================================
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      max_parallel: ${{ steps.prepare.outputs.max_parallel }}
     steps:
-      - name: Dispatch, wait, and assert child workflows
+      - name: Validate and prepare inputs
+        id: prepare
+        env:
+          SCANNER_INPUT: ${{ inputs.scanners }}
+          EXCLUDE_INPUT: ${{ inputs.exclude }}
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          # name (workflow file stem) -> actual workflow filename.
+          # Only real, dispatchable scan workflows on this branch.
+          NAME_TO_FILE = {
+              "anchore-ingestion": "anchore-ingestion.yml",
+              "aqua-trivy-invalid-image": "aqua-trivy-invalid-image.yaml",
+              "aqua-trivy-local-image-arm": "aqua-trivy-local-image-arm.yml",
+              "aqua-trivy-local-image": "aqua-trivy-local-image.yml",
+              "aqua-trivy-orchestration": "aqua-trivy-orchestration.yml",
+              "bandit-orchestration": "bandit-orchestration.yml",
+              "blackduck-container": "blackduck-container.yml",
+              "brakeman-orchestration": "brakeman-orchestration.yml",
+              "checkov-orchestration": "checkov-orchestration.yml",
+              "ghas-orchestration": "ghas-orchestration.yml",
+              "gitleaks-orchestration": "gitleaks-orchestration.yml",
+              "grype-container": "grype-container.yml",
+              "grype-orchestration": "grype-orchestration.yml",
+              "harness-sast-orchestration": "harness-sast-orchestration.yml",
+              "harness-sca-container": "harness-sca-container.yml",
+              "modelscan-orchestration": "modelscan-orchestration.yml",
+              "nikto-orchestration": "nikto-orchestration.yml",
+              "osv-orchestration": "osv-orchestration.yml",
+              "owasp-orchestration-policy": "owasp-orchestration-policy.yml",
+              "owasp-orchestration": "owasp-orchestration.yml",
+              "prisma-cloud-container": "prisma-cloud-container.yml",
+              "security-scan": "security-scan.yml",
+              "semgrep-orchestration": "semgrep-orchestration.yml",
+              "snyk-orchestration": "snyk-orchestration.yml",
+              "sonarqube-extraction": "sonarqube-extraction.yml",
+              "sonarqube-orchestration": "sonarqube-orchestration.yml",
+              "traceable-dast": "traceable-dast.yml",
+              "wiz-container": "wiz-container.yml",
+              "wiz-directory-arm": "wiz-directory-arm.yml",
+              "wiz-directory": "wiz-directory.yml",
+              "zap-orchestration": "zap-orchestration.yml",
+          }
+
+          # Negative-scenario workflows: EXPECTED to fail. A child-run
+          # conclusion of "failure" is treated as PASSED; "success" as FAILED.
+          # >>> Add any other negative-test workflow names here. <<<
+          EXPECT_FAIL = {
+              "aqua-trivy-invalid-image",
+              "aqua-trivy-local-image-arm",
+              "aqua-trivy-local-image",
+              "aqua-trivy-orchestration",
+              "owasp-orchestration-policy"
+          }
+
+          def norm(x):
+              """Normalize an entry: drop any path and a .yml/.yaml suffix.
+              So 'harness-sast-orchestration', '.../harness-sast-orchestration.yml'
+              and 'zap-orchestration.yaml' all reduce to the scanner name."""
+              x = str(x).strip()
+              x = x.rsplit("/", 1)[-1]          # strip any path / URL prefix
+              if x.endswith(".yml"):
+                  x = x[:-4]
+              elif x.endswith(".yaml"):
+                  x = x[:-5]
+              return x
+
+          def parse_list(raw):
+              """Accept a JSON array or a comma-separated string.
+              Entries may include a .yml/.yaml extension or a path."""
+              raw = raw.strip()
+              if not raw:
+                  return []
+              if raw.startswith("["):
+                  try:
+                      v = json.loads(raw)
+                  except json.JSONDecodeError:
+                      raise SystemExit(f"Invalid JSON array: {raw}")
+                  if not isinstance(v, list):
+                      raise SystemExit("Expected a JSON array")
+                  items = v
+              else:
+                  items = raw.split(",")
+              return [norm(p) for p in items if norm(p)]
+
+          raw = os.environ["SCANNER_INPUT"].strip()
+          limit = int(os.environ["MAX_PARALLEL"])
+          if not 1 <= limit <= 30:
+              raise SystemExit("max_parallel must be between 1 and 30")
+
+          if raw.lower() == "all":
+              selected = list(NAME_TO_FILE.keys())
+          else:
+              selected = parse_list(raw)
+
+          if not selected:
+              raise SystemExit("Select at least one scanner")
+          if len(selected) != len(set(selected)):
+              raise SystemExit("Duplicate scanners are not allowed")
+
+          invalid = sorted(set(selected) - set(NAME_TO_FILE))
+          if invalid:
+              raise SystemExit(f"Invalid scanners: {invalid}\nValid: {sorted(NAME_TO_FILE)}")
+
+          # Apply excludes.
+          exclude = parse_list(os.environ.get("EXCLUDE_INPUT", ""))
+          bad_excl = sorted(set(exclude) - set(NAME_TO_FILE))
+          if bad_excl:
+              raise SystemExit(f"Invalid exclude names: {bad_excl}\nValid: {sorted(NAME_TO_FILE)}")
+          excl = set(exclude)
+          final = [s for s in selected if s not in excl]
+          if not final:
+              raise SystemExit("All selected scanners were excluded - nothing to run")
+
+          unknown_neg = sorted(EXPECT_FAIL - set(NAME_TO_FILE))
+          if unknown_neg:
+              raise SystemExit(f"EXPECT_FAIL names not in scanner list: {unknown_neg}")
+
+          matrix = [{
+              "name": s,
+              "file": NAME_TO_FILE[s],
+              "expected": "failure" if s in EXPECT_FAIL else "success",
+          } for s in final]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("matrix=" + json.dumps(matrix) + "\n")
+              f.write(f"max_parallel={limit}\n")
+          print(f"Running {len(final)} scanner(s): {final}")
+          if excl:
+              print(f"Excluded: {sorted(excl & set(selected))}")
+          print(f"Negative tests (expected to fail): {sorted(EXPECT_FAIL & set(final))}")
+          print(f"Max parallel: {limit}")
+          PY
+
+  # ====================================================================
+  # run-scanners - one matrix job per scanner (parallel, throttled by
+  #                max_parallel). Marks PASSED when the actual conclusion
+  #                matches the expected outcome.
+  # ====================================================================
+  run-scanners:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        scanner: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    name: ${{ matrix.scanner.name }}
+    steps:
+      - name: Dispatch and monitor scanner
+        id: scanner
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          REF: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SCANNER: ${{ matrix.scanner.name }}
+          WF_FILE: ${{ matrix.scanner.file }}
+          EXPECTED: ${{ matrix.scanner.expected }}
           ORG_ID: ${{ inputs.harness-org-id }}
           PROJECT_ID: ${{ inputs.harness-project-id }}
           DOMAIN: ${{ inputs.harness-domain }}
-          SCANNERS: ${{ inputs.scanners }}
         shell: bash
         run: |
           set -uo pipefail
+          mkdir -p results
+          RESULT="results/${SCANNER}.json"
+          RUN_ID=""; RUN_URL=""; CONCLUSION="unknown"; STATUS="FAILED"
 
-          WORKDIR="$(mktemp -d)"
-
-          # Every dispatchable scan workflow, as "name|file" rows.
-          # (name is the workflow file without extension; use it in the
-          # 'scanners' input to run a subset.)
-          ROWS=(
-            "anchore-ingestion|anchore-ingestion.yml"
-            "aqua-trivy-invalid-image|aqua-trivy-invalid-image.yaml"
-            "aqua-trivy-local-image-arm|aqua-trivy-local-image-arm.yml"
-            "aqua-trivy-local-image|aqua-trivy-local-image.yml"
-            "aqua-trivy-orchestration|aqua-trivy-orchestration.yml"
-            "aqua-trivy-valid-image|aqua-trivy-valid-image.yaml"
-            "aquaTrivy-ingestion|aquaTrivy-ingestion.yml"
-            "bandit-orchestration|bandit-orchestration.yml"
-            "blackduck-container|blackduck-container.yml"
-            "brakeman-orchestration|brakeman-orchestration.yml"
-            "checkov-orchestration|checkov-orchestration.yml"
-            "custom-ingestion|custom-ingestion.yml"
-            "ghas-orchestration|ghas-orchestration.yml"
-            "gitleaks-orchestration|gitleaks-orchestration.yml"
-            "grype-container|grype-container.yml"
-            "grype-orchestration|grype-orchestration.yml"
-            "harness-sast-orchestration|harness-sast-orchestration.yml"
-            "harness-sca-container|harness-sca-container.yml"
-            "mend-scanner-orchestration|mend-scanner-orchestration.yml"
-            "modelscan-orchestration|modelscan-orchestration.yml"
-            "nikto-orchestration|nikto-orchestration.yml"
-            "osv-orchestration|osv-orchestration.yml"
-            "owasp-orchestration-policy|owasp-orchestration-policy.yml"
-            "owasp-orchestration|owasp-orchestration.yml"
-            "prisma-cloud-container|prisma-cloud-container.yml"
-            "security-scan|security-scan.yml"
-            "semgrep-ingestion|semgrep-ingestion.yml"
-            "semgrep-orchestration|semgrep-orchestration.yml"
-            "snyk-ingest-false|snyk-ingest-false.yml"
-            "snyk-ingestion|snyk-ingestion.yaml"
-            "snyk-orchestration|snyk-orchestration.yml"
-            "sonarqube-extraction|sonarqube-extraction.yml"
-            "sonarqube-orchestration|sonarqube-orchestration.yml"
-            "traceable-dast|traceable-dast.yml"
-            "wiz-container|wiz-container.yml"
-            "wiz-directory-arm|wiz-directory-arm.yml"
-            "wiz-directory|wiz-directory.yml"
-            "wiz-orchestrator|wiz-orchestrator.yml"
-            "zap-orchestration|zap-orchestration.yml"
-          )
-
-          # Normalize the scanners selector into a space-padded match string.
-          SEL="$(printf '%s' "${SCANNERS:-all}" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
-          want() {
-            # $1 = workflow name (lowercased). Returns 0 if it should run.
-            [ -z "$SEL" ] && return 0
-            [ "$SEL" = "all" ] && return 0
-            case ",$SEL," in *",$1,"*) return 0 ;; esac
-            return 1
+          save_result() {
+            python3 - "$RESULT" <<PY
+          import json, sys
+          json.dump({
+            "scanner": "$SCANNER", "file": "$WF_FILE",
+            "expected": "$EXPECTED", "conclusion": "$CONCLUSION",
+            "status": "$STATUS", "run_id": "$RUN_ID", "url": "$RUN_URL"
+          }, open(sys.argv[1], "w"))
+          PY
           }
 
-          # ------------------------------------------------------------------
-          # dispatch <wf-file>  ->  echoes the run id of the run it created
-          # ------------------------------------------------------------------
-          dispatch() {
-            local wf="$1"
-            local since
-            since="$(date -u -d '-15 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+          START="$(date -u -d '-15 seconds' +%Y-%m-%dT%H:%M:%SZ)"
 
-            gh workflow run "$wf" \
-              --ref "$REF" \
-              -f harness-org-id="$ORG_ID" \
-              -f harness-project-id="$PROJECT_ID" \
-              -f harness-domain="$DOMAIN" >&2
+          if ! gh workflow run "$WF_FILE" \
+               --repo "$REPO" --ref "$BRANCH" \
+               -f harness-org-id="$ORG_ID" \
+               -f harness-project-id="$PROJECT_ID" \
+               -f harness-domain="$DOMAIN"; then
+            echo "Dispatch failed: $SCANNER ($WF_FILE)"
+            save_result; exit 1
+          fi
 
-            local run_id="" attempt
-            for attempt in $(seq 1 24); do
-              sleep 5
-              run_id="$(gh run list \
-                --workflow "$wf" \
-                --event workflow_dispatch \
-                --branch "$REF" \
-                --limit 20 \
-                --json databaseId,createdAt \
-                --jq "map(select(.createdAt > \"$since\")) | sort_by(.createdAt) | last | .databaseId" 2>/dev/null)"
-              if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
-                echo "$run_id"; return 0
-              fi
-            done
-            return 1
-          }
-
-          # ------------------------------------------------------------------
-          # Phase 1 - dispatch every selected workflow and record its run id.
-          # ------------------------------------------------------------------
-          echo "=================== Dispatching scans ==================="
-          echo "Selection: ${SCANNERS:-all}"
-          for row in "${ROWS[@]}"; do
-            IFS='|' read -r name wf <<< "$row"
-            name_lc="$(printf '%s' "$name" | tr 'A-Z' 'a-z')"
-            if ! want "$name_lc"; then echo "Skipping $name (not selected)"; continue; fi
-            echo "Dispatching $name ($wf) ..."
-            if run_id="$(dispatch "$wf")"; then
-              echo "$name|$wf|$run_id" >> "$WORKDIR/runs.txt"
-              echo "  -> $name run id: $run_id"
-              echo "  -> ${{ github.server_url }}/${{ github.repository }}/actions/runs/$run_id"
-            else
-              echo "::error::Could not find a run for $name after dispatching. Check the Actions tab."
-              echo "$name|$wf|UNKNOWN" >> "$WORKDIR/runs.txt"
-            fi
+          for i in $(seq 1 30); do
+            RUN_ID="$(gh run list --repo "$REPO" --workflow "$WF_FILE" \
+              --branch "$BRANCH" --event workflow_dispatch --limit 20 \
+              --json databaseId,createdAt \
+              --jq "map(select(.createdAt > \"$START\")) | sort_by(.createdAt) | last | .databaseId" 2>/dev/null || true)"
+            [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] && break
+            RUN_ID=""; sleep 3
           done
+          if [ -z "$RUN_ID" ]; then
+            echo "Could not find child run: $SCANNER"
+            save_result; exit 1
+          fi
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          echo "Run: $RUN_URL"
 
-          if [ ! -f "$WORKDIR/runs.txt" ]; then
-            echo "No scans matched the selection '${SCANNERS:-all}'. Nothing to do."
-            exit 0
+          gh run watch "$RUN_ID" --repo "$REPO" --interval 15 >/dev/null 2>&1 || true
+          CONCLUSION="$(gh run view "$RUN_ID" --repo "$REPO" --json conclusion --jq '.conclusion' 2>/dev/null || echo unknown)"
+
+          if [ "$EXPECTED" = "failure" ]; then
+            if [ "$CONCLUSION" = "failure" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
+          else
+            if [ "$CONCLUSION" = "success" ]; then STATUS="PASSED"; else STATUS="FAILED"; fi
           fi
 
-          # ------------------------------------------------------------------
-          # Phase 2 - wait for each run to finish (runs proceed in parallel).
-          # ------------------------------------------------------------------
-          echo ""
-          echo "=================== Waiting for scans ==================="
-          while IFS='|' read -r name wf run_id; do
-            [ "$run_id" = "UNKNOWN" ] && continue
-            echo "Watching $name (run $run_id) ..."
-            gh run watch "$run_id" --interval 15 >/dev/null 2>&1 || true
-          done < "$WORKDIR/runs.txt"
+          save_result
+          echo "Scanner: $SCANNER | expected=$EXPECTED | conclusion=$CONCLUSION | status=$STATUS"
+          [ "$STATUS" = "PASSED" ]
 
-          # ------------------------------------------------------------------
-          # Phase 3 - per run: conclusion, download artifacts, tally counts,
-          #           ASSERT (succeeded AND issue count present).
-          # ------------------------------------------------------------------
-          echo ""
-          echo "=================== Collecting & asserting ==================="
-          ASSERT_FAILED=0
+      - name: Upload scanner result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-result-${{ matrix.scanner.name }}
+          path: results/${{ matrix.scanner.name }}.json
+          if-no-files-found: warn
+          retention-days: 7
 
-          {
-            echo "## Master STO Scan Results"
-            echo ""
-            echo "| Scanner | Run | Conclusion | Count present | Assertion | Total | Critical | High | Medium | Low | Info |"
-            echo "|---|---|---|---|---|---|---|---|---|---|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
+  # ====================================================================
+  # summary - merge results, print table (incl. expected), and assert
+  #           every scanner matched its expected outcome.
+  # ====================================================================
+  summary:
+    name: Scanner Execution Summary
+    if: always()
+    needs: [prepare, run-scanners]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download scanner results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scanner-result-*
+          path: results
+          merge-multiple: true
 
-          while IFS='|' read -r name wf run_id; do
-            if [ "$run_id" = "UNKNOWN" ]; then
-              ASSERT_FAILED=1
-              echo "ASSERT FAIL: $name - no run was found after dispatch"
-              echo "| $name | - | not-found | no | FAIL | - | - | - | - | - | - |" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
+      - name: Generate summary
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, json, os
+          results = []
+          for path in glob.glob("results/*.json"):
+              try: results.append(json.load(open(path)))
+              except (ValueError, OSError): pass
+          results.sort(key=lambda x: x.get("scanner", ""))
 
-            conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion' 2>/dev/null || echo 'unknown')"
+          out = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          out.write("# Scanner Execution Summary\n\n")
+          out.write("| Scanner | Status | Run |\n")
+          out.write("|---|---|---|\n")
+          for r in results:
+              url = r.get("url", "")
+              link = f"[View run]({url})" if url else "Unavailable"
+              out.write(f"| {r.get('scanner','')} | **{r.get('status','')}** | {link} |\n")
+          passed = sum(r.get("status")=="PASSED" for r in results)
+          failed = len(results)-passed
+          out.write(f"\n**Total:** {len(results)} | **Passed:** {passed} | **Failed:** {failed}\n")
+          print(f"Results collected: {len(results)}")
+          PY
 
-            dldir="$WORKDIR/$run_id"
-            mkdir -p "$dldir"
-            gh run download "$run_id" -D "$dldir" >/dev/null 2>&1 || true
+      - name: Assert all scanners matched expected outcome
+        env:
+          MATRIX: ${{ needs.prepare.outputs.matrix }}
+        run: |
+          python3 - <<'PY'
+          import glob, json, os, sys
+          expected = {e["name"]: e["expected"] for e in json.loads(os.environ["MATRIX"])}
+          results = {}
+          for path in glob.glob("results/*.json"):
+              try:
+                  r = json.load(open(path)); results[r["scanner"]] = r
+              except (ValueError, OSError, KeyError): pass
 
-            c=0; h=0; m=0; l=0; i=0; t=0
-            count_present=0
-            while IFS= read -r envfile; do
-              getv() { grep "^$1=" "$2" | head -n1 | cut -d= -f2 | tr -dc '0-9'; }
-              if grep -q "^ISSUES_COUNT=" "$envfile"; then count_present=1; fi
-              vc="$(getv CRITICAL "$envfile")"; vc="${vc:-0}"
-              vh="$(getv HIGH "$envfile")"; vh="${vh:-0}"
-              vm="$(getv MEDIUM "$envfile")"; vm="${vm:-0}"
-              vl="$(getv LOW "$envfile")"; vl="${vl:-0}"
-              vi="$(getv INFO "$envfile")"; vi="${vi:-0}"
-              vt="$(getv ISSUES_COUNT "$envfile")"; vt="${vt:-0}"
-              c=$((c + vc)); h=$((h + vh)); m=$((m + vm)); l=$((l + vl)); i=$((i + vi)); t=$((t + vt))
-            done < <(find "$dldir" -type f -name '*.env' 2>/dev/null)
+          problems = []
+          for s, exp in expected.items():
+              r = results.get(s)
+              if r is None:
+                  problems.append(f"{s}: no result")
+              elif r.get("status") != "PASSED":
+                  problems.append(f"{s}: expected={exp} conclusion={r.get('conclusion')} -> {r.get('status')}")
 
-            assertion="PASS"; mark="PASS"; reasons=""
-            if [ "$conclusion" != "success" ]; then
-              assertion="FAIL"; mark="FAIL"; reasons="run concluded '$conclusion'"
-            fi
-            if [ "$count_present" -ne 1 ]; then
-              assertion="FAIL"; mark="FAIL"
-              reasons="${reasons:+$reasons; }no issue count reported"
-            fi
-
-            present_txt="yes"; [ "$count_present" -eq 1 ] || present_txt="no"
-            if [ "$assertion" = "PASS" ]; then
-              echo "ASSERT PASS: $name - conclusion=$conclusion total=$t (C:$c H:$h M:$m L:$l I:$i)"
-            else
-              ASSERT_FAILED=1
-              echo "ASSERT FAIL: $name - $reasons (conclusion=$conclusion, count_present=$count_present)"
-            fi
-
-            runlink="[$run_id](${{ github.server_url }}/${{ github.repository }}/actions/runs/$run_id)"
-            echo "| $name | $runlink | $conclusion | $present_txt | $mark | $t | $c | $h | $m | $l | $i |" >> "$GITHUB_STEP_SUMMARY"
-          done < "$WORKDIR/runs.txt"
-
-          # ------------------------------------------------------------------
-          # Phase 4 - overall result.
-          # ------------------------------------------------------------------
-          echo ""
-          echo "=================== Verification ==================="
-          if [ "$ASSERT_FAILED" -eq 1 ]; then
-            echo "::error::One or more scans failed the assertion (not successful, or no issue count reported)."
-            { echo ""; echo "**One or more scans failed the assertion.**"; } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "All scans succeeded and reported an issue count."
-          { echo ""; echo "**All scans succeeded and reported an issue count.**"; } >> "$GITHUB_STEP_SUMMARY"
+          if problems:
+              print("Scanners that did not match expected outcome:")
+              for p in problems: print("  -", p)
+              sys.exit(1)
+          print(f"All {len(expected)} scanner(s) matched their expected outcome.")
+          PY
