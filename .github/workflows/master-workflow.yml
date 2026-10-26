@@ -1,4 +1,4 @@
-name: Master Scanner Workflow
+name: Master STO Scanner Workflow
 
 on:
   workflow_dispatch:
